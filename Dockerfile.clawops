@@ -1,0 +1,34 @@
+# clawops 빌드 — 업스트림 Dockerfile 은 이미지 안에서 upstream 을 git clone 한다.
+# 이 파일은 체크아웃한 소스(서브모듈 포함)를 그대로 빌드한다: docker build -f Dockerfile.clawops .
+FROM debian:bookworm-slim AS build
+
+ARG BUILD_CPUS=8
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends ca-certificates gcc g++ make build-essential \
+  cmake autoconf automake curl libtool libtool-bin libssl-dev libcurl4-openssl-dev zlib1g-dev \
+  libgoogle-perftools-dev jq libboost-all-dev
+
+COPY . /usr/local/src/drachtio-server
+WORKDIR /usr/local/src/drachtio-server
+RUN ./bootstrap.sh \
+  && mkdir -p build && cd build \
+  && ../configure --enable-tcmalloc=yes CPPFLAGS='-DNDEBUG' CXXFLAGS='-O2' \
+  && make -j${BUILD_CPUS} \
+  && make install DESTDIR=/out
+
+FROM debian:bookworm-slim
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends ca-certificates libssl3 libcurl4 zlib1g \
+  libgoogle-perftools4 libboost-system1.74.0 libboost-thread1.74.0 libboost-filesystem1.74.0 \
+  libboost-log1.74.0 jq curl \
+  && rm -rf /var/lib/apt/lists/*
+COPY --from=build /out/usr/local/ /usr/local/
+COPY docker.drachtio.conf.xml /etc/drachtio.conf.xml
+COPY entrypoint.sh /
+RUN rm -f /usr/local/bin/timer /usr/local/bin/ssltest /usr/local/bin/parser /usr/local/bin/uri_test \
+  /usr/local/bin/test_https /usr/local/bin/test_asio_curl && ldconfig
+
+VOLUME ["/config"]
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["drachtio"]
